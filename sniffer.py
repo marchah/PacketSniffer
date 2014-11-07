@@ -1,9 +1,8 @@
 import socket, sys
 from struct import *
 
-from Protocol.TCP import TCP
-from Protocol.UDP import UDP
-from Protocol.ICMP import ICMP
+from Protocol.IPV4 import IPV4
+from Protocol.ARP import ARP
 
 #Convert a string of 6 characters of ethernet address into a dash separated hex string
 def eth_addr (a) :
@@ -18,11 +17,6 @@ def convert_ether_type (a) :
 
 PROTOCOL_IPV4 = convert_ether_type('0x0800')
 PROTOCOL_ARP = convert_ether_type('0x0806')
-
-
-PROTOCOL_TCP = 6
-PROTOCOL_UDP = 17
-PROTOCOL_ICMP = 1
 
 try:
     s = socket.socket( socket.AF_PACKET , socket.SOCK_RAW , socket.ntohs(0x0003))
@@ -58,64 +52,17 @@ while True:
     eth_protocol = socket.ntohs(eth[2])
     print 'Destination MAC : ' + addrMacDestination + ' Source MAC : ' + addrMacSource + ' Protocol : ' + str(eth_protocol)
     
-    if eth_protocol == PROTOCOL_IPV4 :
-        """
-        ####                       IP HEADER                         ####
-        0                   1                   2                   3
-        0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |Version|  IHL  |Type of Service|          Total Length         |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |         Identification        |Flags|      Fragment Offset    |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |  Time to Live |    Protocol   |         Header Checksum       |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |                       Source Address                          |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |                    Destination Address                        |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |                    Options                    |    Padding    |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        """
-
-        IP_HEADER_LENGTH = ETH_HEADER_LENGTH + 20
-        ip_header = unpack('!BBHHHBBH4s4s', packet[ETH_HEADER_LENGTH: IP_HEADER_LENGTH])
-        tmp = ip_header[0]
-        version = tmp >> 4
-        ihl = tmp & 0xF
-
-        iph_length = ihl * 4
-        
-        ttl = ip_header[5]
-        protocol = ip_header[6]
-        s_addr = socket.inet_ntoa(ip_header[8]);
-        d_addr = socket.inet_ntoa(ip_header[9]);
-        print ip_header
-        print 'Version: ' + str(version) + ', IHL: ' + str(ihl) + ', IP Header Length: ' + str(iph_length) + ', Time to Live: ' + str(ttl) + ', Protocol: ' + str(protocol) + ' Source Address : ' + str(s_addr) + ' Destination Address : ' + str(d_addr)
-        if protocol == TCP.PROTOCOL :
-
-          tcp = TCP()
-          tcp.unpack(packet, ETH_HEADER_LENGTH + iph_length)
-          tcp.display_info()
-
-        elif protocol == UDP.PROTOCOL :
-
-          upd = UDP()
-          upd.unpack(packet, ETH_HEADER_LENGTH + iph_length)
-          upd.display_info()
-
-        elif protocol == ICMP.PROTOCOL :
-
-          icmp = ICMP()
-          icmp.unpack(packet, ETH_HEADER_LENGTH + iph_length)
-          icmp.display_info()
-
-#some other IP packet like IGMP
-        else :
-          print 'Protocol other than TCP/UDP/ICMP'
-    elif eth_protocol == PROTOCOL_ARP :
-      print 'Protocol ARP'
+    if eth_protocol == IPV4.PROTOCOL :
+      ipv4 = IPV4()
+      ipv4.unpack(packet, ETH_HEADER_LENGTH)
+      ipv4.display_info()
+      print ''
+    elif eth_protocol == ARP.PROTOCOL :
+      arp = ARP()
+      arp.unpack(packet, ETH_HEADER_LENGTH)
+      arp.display_info()
     else :
-        print 'Not Protocol IP: ' + str(eth_protocol)
+      print ARP.PROTOCOL
+      print 'Not Protocol IP or ARP: ' + str(eth_protocol)
 
     print
