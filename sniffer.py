@@ -1,68 +1,103 @@
-import socket, sys
-from struct import *
+from select import select
+import socket
+import sys
 
-from Protocol.IPV4 import IPV4
-from Protocol.ARP import ARP
+from impacket.ImpactDecoder import EthDecoder
+from impacket.ImpactPacket import IP, TCP, UDP, ICMP, Ethernet, ARP
 
-#Convert a string of 6 characters of ethernet address into a dash separated hex string
-def eth_addr (a) :
-  b = "%.2x:%.2x:%.2x:%.2x:%.2x:%.2x" % (ord(a[0]) , ord(a[1]) , ord(a[2]), ord(a[3]), ord(a[4]) , ord(a[5]))
-  return b
+import fcntl
+import struct
+import array
 
-def convert_to_little_endian (a) :
-  return a[0]+a[1]+a[4]+a[5]+a[2]+a[3]
-
-def convert_ether_type (a) :
-  return int(convert_to_little_endian(a), 16)
-
-PROTOCOL_IPV4 = convert_ether_type('0x0800')
-PROTOCOL_ARP = convert_ether_type('0x0806')
-
-try:
-    s = socket.socket( socket.AF_PACKET , socket.SOCK_RAW , socket.ntohs(0x0003))
-except socket.error , msg:
-    print 'Socket could not be created. Error Code : ' + str(msg[0]) + ' Message ' + msg[1]
-    sys.exit()
+def all_interfaces():
+	max_possible = 128 # arbitrary. raise if needed.
+	bytes = max_possible * 32
+	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	names = array.array('B', '\0' * bytes)
+	outbytes = struct.unpack('iL', fcntl.ioctl(
+			s.fileno(),
+			0x8912, # SIOCGIFCONF
+			struct.pack('iL', bytes, names.buffer_info()[0])
+			))[0]
+	namestr = names.tostring()
+	lst = []
+	for i in range(0, outbytes, 40):
+		name = namestr[i:i+16].split('\0', 1)[0]
+		ip = namestr[i+20:i+24]
+		lst.append((name, ip))
+	return lst
+	
+def format_ip(addr):
+	return str(ord(addr[0])) + '.' + \
+	    str(ord(addr[1])) + '.' + \
+	    str(ord(addr[2])) + '.' + \
+	    str(ord(addr[3]))
  
-while True:
-    rawPacket = s.recvfrom(65565)
-     
-    packet = rawPacket[0]
+ 
+ifs = all_interfaces()
+DEFAULT_INTERFACES = []
+if len(ifs) == 0 :
+	print "You don't have the right to listen on any interface."
+	sys.exit(0)
+for i in ifs:
+	DEFAULT_INTERFACES.append(i[0])
+	print "%12s %s" % (i[0], format_ip(i[1]))
 
-    addressPacket = rawPacket[1]
-    print addressPacket
+if len(sys.argv) == 1:
+        toListen = []
+        print "Listening on all interface available."
+else:
+        toListen = sys.argv[1:]
 
-    """
-        ####                    ETHERNET HEADER                      ####
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |       Ethernet destination address (first 32 bits)            |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        | Ethernet dest (last 16 bits)  |Ethernet source (first 16 bits)|
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |       Ethernet source address (last 32 bits)                  |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-        |        Type code              |                               |
-        +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    """
-    ETH_HEADER_LENGTH = 6+6+2
-    eth_header = packet[:ETH_HEADER_LENGTH]
-    eth = unpack('!6s6sH', eth_header);
-    addrMacDestination = eth_addr(eth[0])
-    addrMacSource = eth_addr(eth[1])
-    eth_protocol = socket.ntohs(eth[2])
-    print 'Destination MAC : ' + addrMacDestination + ' Source MAC : ' + addrMacSource + ' Protocol : ' + str(eth_protocol)
-    
-    if eth_protocol == IPV4.PROTOCOL :
-      ipv4 = IPV4()
-      ipv4.unpack(packet, ETH_HEADER_LENGTH)
-      ipv4.display_info()
-      print ''
-    elif eth_protocol == ARP.PROTOCOL :
-      arp = ARP()
-      arp.unpack(packet, ETH_HEADER_LENGTH)
-      arp.display_info()
-    else :
-      print ARP.PROTOCOL
-      print 'Not Protocol IP or ARP: ' + str(eth_protocol)
+sockets = []
+listening = []
+if len(toListen) == 0:
+	s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+	sockets.append(s)
+	print "Listening on interfaces:", DEFAULT_INTERFACES
+else:
+	for interface in toListen:
+		try:
+			print interface
+			s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+			s.bind((interface, 0x0800))
+			sockets.append(s)
+			listening.append(interface)
+		except socket.error:
+			print "Ignoring unknown interface:", interface
+			continue
+	if len(toListen) == 0:
+		print "There are no interfaces available."
+		sys.exit(0)
+	print "Listening on interfaces:", listening
 
-    print
+decoder = EthDecoder()
+while len(sockets) > 0:
+    ready = select(sockets, [], [])[0]
+    for s in ready:
+        packet = s.recvfrom(4096)[0]
+        if 0 == len(packet):
+		sockets.remove(s)
+		s.close()
+        else:
+	    l1 = decoder.decode(packet)
+            if isinstance(l1, Ethernet):
+                print 'Eth',
+                l2 = l1.child()
+                if isinstance(l2,IP):
+                    print "IP",
+                    l3=l2.child()
+                    if isinstance(l3,TCP):
+                        print "TCP"
+                    elif isinstance(l3,UDP):
+                        print "UDP"
+                    elif isinstance(l3,ICMP):
+                        print "IMCP"
+                    else :
+                        print "No TCP or UDP or ICMP"
+		elif isinstance(l2,ARP):
+			print "ARP"
+                else :
+                    print "No IP or ARP"
+            else :
+                print 'No Eth'
